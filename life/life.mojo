@@ -12,8 +12,7 @@ def main():
         [0, 0, 0, 0, 0, 0, 0, 0],
     ]
     glider_grid = Grid(8, 8, glider^)
-    result = glider_grid.grid_str()
-    print(result)
+    print(String(glider_grid))
 
 
 
