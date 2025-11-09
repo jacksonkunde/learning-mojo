@@ -66,7 +66,7 @@ struct Grid(Copyable, Movable, Stringable):
 
 
     @staticmethod
-    fn random(rows: Int, cols: Int) -> Self:
+    fn random(rows: Int, cols: Int, p_alive: Float64 = 0.5) -> Self:
         # Set random seed based on current time
         random.seed()
 
@@ -75,7 +75,8 @@ struct Grid(Copyable, Movable, Stringable):
         for _ in range(rows):
             var row_data: List[Int] = []
             for _ in range(cols):
-                row_data.append(Int(random.random_si64(0, 1)))
+                var cell_val: Int = 1 if random.random_float64(0, 1) < p_alive else 0
+                row_data.append(cell_val)
             grid.append(row_data^)
             
         return Self(rows, cols, grid^)

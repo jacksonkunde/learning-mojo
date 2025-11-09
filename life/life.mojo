@@ -24,7 +24,7 @@ def run_display(
 
     cell_height = window_height / grid.rows
     cell_width = window_width / grid.cols
-    border_size = 1
+    border_size = 0 if grid.rows > 256 else 1
     cell_fill_color = pygame.Color(cell_color)
     background_fill_color = pygame.Color(background_color)
 
@@ -71,5 +71,6 @@ def run_display(
 
 
 def main():
-    start = Grid.random(128, 128)
-    run_display(start^)
+    length, width = 512, 512
+    start = Grid.random(length, width, 0.3)
+    run_display(start^, window_height=1024, window_width=1024, pause=0.05)
