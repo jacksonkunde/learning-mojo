@@ -95,29 +95,57 @@ fn matmul_tiled[
     a: LayoutTensor[dtype, layout_tiled, ImmutAnyOrigin],
     b: LayoutTensor[dtype, layout_tiled, ImmutAnyOrigin],
 ):
-    # local_row = thread_idx.y
-    # local_col = thread_idx.x
-    # tiled_row = block_idx.y * TPB + thread_idx.y
-    # tiled_col = block_idx.x * TPB + thread_idx.x
+    local_row = thread_idx.y
+    local_col = thread_idx.x
+    tiled_row = block_idx.y * TPB + thread_idx.y
+    tiled_col = block_idx.x * TPB + thread_idx.x
 
-    # a_shared = LayoutTensor[
-    #     dtype,
-    #     Layout.row_major(TPB, TPB),
-    #     MutAnyOrigin,
-    #     address_space = AddressSpace.SHARED,
-    # ].stack_allocation()
-    # b_shared = LayoutTensor[
-    #     dtype,
-    #     Layout.row_major(TPB, TPB),
-    #     MutAnyOrigin,
-    #     address_space = AddressSpace.SHARED,
-    # ].stack_allocation()
+    out_tile = output.tile[TPB, TPB](Int(block_idx.y), Int(block_idx.x))
+    a_shared = LayoutTensor[
+        dtype,
+        Layout.row_major(TPB, TPB),
+        MutAnyOrigin,
+        address_space = AddressSpace.SHARED,
+    ].stack_allocation()
+    b_shared = LayoutTensor[
+        dtype,
+        Layout.row_major(TPB, TPB),
+        MutAnyOrigin,
+        address_space = AddressSpace.SHARED,
+    ].stack_allocation()
 
-    # # each iteration
-    # if local_row < size and local_col < size:
-    #     # load the elet into shared memory
-    #     a_shared[local_row, local_col] = a[tiled_row, tiled_col]
-    # barrier() # wait for all thread to finish loading the tile to shared memory
+    var output_val: output.element_type = 0
+
+    alias load_a_layout = Layout.row_major(1, TPB)
+    alias load_b_layout = Layout.row_major(1, TPB)
+
+    # each iteration
+    # Load the tiles into memory across all threads in the block
+    a_tile = a.tile[TPB, TPB](Int(block_idx.y), Int(idx))
+    b_tile = b.tile[TPB, TPB](Int(idx), Int(block_idx.x))
+
+    copy_dram_to_sram_async[
+        thread_layout=load_a_layout,
+        num_threads=NUM_THREADS,
+        block_dim_count=BLOCK_DIM_COUNT,
+    ](a_shared, a_tile)
+
+    copy_dram_to_sram_async[
+        thread_layout=load_b_layout,
+        num_threads=NUM_THREADS,
+        block_dim_count=BLOCK_DIM_COUNT,
+    ](b_shared, b_tile)
+     
+    # Wait for this loading to finish
+    async_copy_wait_all()
+    barrier()
+
+    # Now each thread should do its multiplications
+    @parameter
+    for k in range(TPB):
+        output_val += a_shared[local_row, k] * b_shared[k, local_col]
+    barrier()
+
 
 
 
