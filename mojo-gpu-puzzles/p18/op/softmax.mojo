@@ -163,34 +163,33 @@ struct SoftmaxCustomOp:
     
     
 
-# ANCHOR_END: broadcast_add
-def main():
-    with DeviceContext() as ctx:
-        alias dtype = DType.float32
-        output_buffer = ctx.enqueue_create_buffer[dtype](SIZE)
-        output_buffer.enqueue_fill(0)
-        input_buffer = ctx.enqueue_create_buffer[dtype](SIZE)
+# def main():
+#     with DeviceContext() as ctx:
+#         alias dtype = DType.float32
+#         output_buffer = ctx.enqueue_create_buffer[dtype](SIZE)
+#         output_buffer.enqueue_fill(0)
+#         input_buffer = ctx.enqueue_create_buffer[dtype](SIZE)
         
-        # Populate input buffer with values
-        with input_buffer.map_to_host() as in_buf_host:
-            for i in range(SIZE):
-                in_buf_host[i] = i
+#         # Populate input buffer with values
+#         with input_buffer.map_to_host() as in_buf_host:
+#             for i in range(SIZE):
+#                 in_buf_host[i] = i
 
-        # Convert buffers to layout tensors
-        var output_tensor = LayoutTensor[dtype, layout, MutAnyOrigin](output_buffer)
-        var input_tensor = LayoutTensor[dtype, layout, ImmutAnyOrigin](input_buffer)
+#         # Convert buffers to layout tensors
+#         var output_tensor = LayoutTensor[dtype, layout, MutAnyOrigin](output_buffer)
+#         var input_tensor = LayoutTensor[dtype, layout, ImmutAnyOrigin](input_buffer)
 
-        alias kernel = softmax_gpu_kernel[layout, SIZE, dtype]
-        ctx.enqueue_function_checked[kernel, kernel](
-            output_tensor,
-            input_tensor,
-            grid_dim=GRID_DIM_X,
-            block_dim=BLOCK_DIM_X,
-        ) 
-        ctx.synchronize()
+#         alias kernel = softmax_gpu_kernel[layout, SIZE, dtype]
+#         ctx.enqueue_function_checked[kernel, kernel](
+#             output_tensor,
+#             input_tensor,
+#             grid_dim=GRID_DIM_X,
+#             block_dim=BLOCK_DIM_X,
+#         ) 
+#         ctx.synchronize()
 
-        with output_buffer.map_to_host() as out_buf_host:
-            print("out:", out_buf_host)
+#         with output_buffer.map_to_host() as out_buf_host:
+#             print("out:", out_buf_host)
 
 
 
