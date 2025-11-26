@@ -1,0 +1,12 @@
+[workspace]
+authors = ["Jackson Kunde <jacksonkunde@gmail.com>"]
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+name = "mojo-gpu-puzzles"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+modular = ">=26.1.0.dev2025112617,<27"
+max = ">=26.1.0.dev2025112617,<27"
