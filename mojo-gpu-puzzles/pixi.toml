@@ -5,8 +5,14 @@ name = "mojo-gpu-puzzles"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
+[activation.env]
+KMP_DUPLICATE_LIB_OK = "TRUE"
+
 [tasks]
 
 [dependencies]
 modular = ">=26.1.0.dev2025112617,<27"
 max = ">=26.1.0.dev2025112617,<27"
+
+[pypi-dependencies]
+torch = ">=2.9.1, <3"
