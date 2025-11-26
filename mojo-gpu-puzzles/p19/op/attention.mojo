@@ -37,9 +37,9 @@ fn matmul_idiomatic_tiled[
     inner: Int,
     dtype: DType = DType.float32,
 ](
-    output: LayoutTensor[mut=True, dtype, out_layout, MutAnyOrigin],
-    a: LayoutTensor[mut=False, dtype, a_layout, MutAnyOrigin],
-    b: LayoutTensor[mut=False, dtype, b_layout, MutAnyOrigin],
+    output: LayoutTensor[dtype, out_layout, MutAnyOrigin],
+    a: LayoutTensor[dtype, a_layout, MutAnyOrigin],
+    b: LayoutTensor[dtype, b_layout, MutAnyOrigin],
 ):
     """Updated idiomatic tiled matrix multiplication from p16."""
     local_row = Int(thread_idx.y)
@@ -124,8 +124,8 @@ fn transpose_kernel[
     cols: Int,
     dtype: DType = DType.float32,
 ](
-    output: LayoutTensor[mut=True, dtype, layout_out, MutAnyOrigin],
-    inp: LayoutTensor[mut=False, dtype, layout_in, MutAnyOrigin],
+    output: LayoutTensor[dtype, layout_out, MutAnyOrigin],
+    inp: LayoutTensor[dtype, layout_in, ImmutAnyOrigin],
 ):
     # Create shared memory for the tile
 
@@ -137,21 +137,24 @@ fn transpose_kernel[
     ].stack_allocation()
     
     
-    local_row = thread_idx.y
-    local_col = thread_idx.x
+    local_row = Int(thread_idx.y)
+    local_col = Int(thread_idx.x)
 
-    global_row = block_idx.y * TRANSPOSE_BLOCK_DIM_XY + local_row
-    global_col = block_idx.x * TRANSPOSE_BLOCK_DIM_XY + local_col
+    global_row = Int(block_idx.y) * TRANSPOSE_BLOCK_DIM_XY + local_row
+    global_col = Int(block_idx.x) * TRANSPOSE_BLOCK_DIM_XY + local_col
 
     if global_row < rows and global_col < cols:
-        # read into shared tile
         shared_tile[local_row, local_col] = inp[global_row, global_col]
 
-    barrier() # sync all threads
+    barrier()
 
-    # Now the tile has been filed by all threads and we can complete our tiled transpose
-    if local_row < TRANSPOSE_BLOCK_DIM_XY and local_col < TRANSPOSE_BLOCK_DIM_XY:
-        output[global_row, global_col] = shared_tile[local_col, local_row]
+    out_row = Int(block_idx.x) * TRANSPOSE_BLOCK_DIM_XY + local_row
+    out_col = Int(block_idx.y) * TRANSPOSE_BLOCK_DIM_XY + local_col
+
+    # Store data from shared memory to global memory (coalesced write)
+    # Note: we transpose the shared memory access pattern
+    if out_row < cols and out_col < rows:
+        output[out_row, out_col] = shared_tile[local_col, local_row]
 
 
 # ANCHOR_END: transpose_kernel
@@ -163,8 +166,8 @@ fn softmax_gpu_kernel[
     input_size: Int,
     dtype: DType = DType.float32,
 ](
-    output: LayoutTensor[mut=True, dtype, layout],
-    input: LayoutTensor[mut=False, dtype, layout],
+    output: LayoutTensor[dtype, layout, MutAnyOrigin],
+    input: LayoutTensor[dtype, layout, MutAnyOrigin],
 ):
     shared_max = LayoutTensor[
         dtype,
@@ -238,7 +241,7 @@ fn attention_cpu_kernel[
 ](
     output: LayoutTensor[dtype, layout_out, MutAnyOrigin],
     q: LayoutTensor[dtype, layout_q, MutAnyOrigin],
-    k: LayoutTensor[dtype, layout_k, MutAnyOrigin],
+    k: LayoutTensor[dtype, layout_k, ImmutAnyOrigin],
     v: LayoutTensor[dtype, layout_v, MutAnyOrigin],
 ):
     """CPU implementation of vector attention."""
@@ -306,7 +309,7 @@ struct AttentionCustomOp:
         var q_tensor = rebind[LayoutTensor[dtype, layout_q, MutAnyOrigin]](
             q.to_layout_tensor()
         )
-        var k_tensor = rebind[LayoutTensor[dtype, layout_k, MutAnyOrigin]](
+        var k_tensor = rebind[LayoutTensor[dtype, layout_k, ImmutAnyOrigin]](
             k.to_layout_tensor()
         )
         var v_tensor = rebind[LayoutTensor[dtype, layout_v, MutAnyOrigin]](
@@ -365,33 +368,82 @@ struct AttentionCustomOp:
                 seq_len
             )  # Reused for scores and weights
 
-            k_t = LayoutTensor[mut=True, dtype, layout_k_t, MutAnyOrigin](
-                k_t_buf.unsafe_ptr()
-            )
+            k_t = LayoutTensor[dtype, layout_k_t, MutAnyOrigin](k_t_buf)
 
             # Step 1: Reshape Q from (d,) to (1, d) - no buffer needed
-            # FILL ME IN 1 line
+            q_2d = q_tensor.reshape[layout_q_2d]()
 
             # Step 2: Transpose K from (seq_len, d) to K^T (d, seq_len)
-            # FILL ME IN 1 function call
+            alias kernel = transpose_kernel[
+                layout_k, layout_k_t, seq_len, d, dtype
+            ]
+            gpu_ctx.enqueue_function_checked[kernel, kernel](
+                k_t,
+                k_tensor,
+                grid_dim=transpose_blocks_per_grid,
+                block_dim=transpose_threads_per_block,
+            )
 
             # Step 3: Compute attention scores using matmul: Q @ K^T = (1, d) @ (d, seq_len) -> (1, seq_len)
             # GPU: Uses matrix multiplication to compute all Q · K[i] scores in parallel
             # Reuse scores_weights_buf as (1, seq_len) for scores
-            # FILL ME IN 2 lines
+            scores_2d = LayoutTensor[dtype, layout_scores_2d, MutAnyOrigin](
+                scores_weights_buf
+            )
+            alias kernel2 = matmul_idiomatic_tiled[
+                layout_q_2d,
+                layout_k_t,
+                layout_scores_2d,
+                1,
+                seq_len,
+                d,
+                dtype
+            ]
+            gpu_ctx.enqueue_function_checked[kernel2, kernel2](
+                scores_2d,
+                q_2d,
+                k_t,
+                grid_dim=scores_blocks_per_grid,
+                block_dim=matmul_threads_per_block,
+            )
 
             # Step 4: Reshape scores from (1, seq_len) to (seq_len,) for softmax
-            # FILL ME IN 1 line
+            weights = scores_2d.reshape[layout_scores]()
 
             # Step 5: Apply softmax to get attention weights
-            # FILL ME IN 1 function call
-
+            alias kernel3 = softmax_gpu_kernel[
+                layout_scores,
+                seq_len,
+                dtype,
+            ]
+            gpu_ctx.enqueue_function_checked[kernel3, kernel3](
+                weights,
+                weights,
+                grid_dim=softmax_blocks_per_grid,
+                block_dim=softmax_threads,
+            )
             # Step 6: Reshape weights from (seq_len,) to (1, seq_len) for final matmul
-            # FILL ME IN 1 line
+            weights_2d = weights.reshape[layout_weights_2d]()
 
             # Step 7: Compute final result using matmul: weights @ V = (1, seq_len) @ (seq_len, d) -> (1, d)
             # Reuse out_tensor reshaped as (1, d) for result
-            # FILL ME IN 2 lines
+            result_2d = output_tensor.reshape[layout_result_2d]()
+            alias final_matmul_kernel = matmul_idiomatic_tiled[
+                layout_scores_2d,
+                layout_v,
+                layout_result_2d,
+                1,
+                d,
+                seq_len,
+                dtype,
+            ]
+            gpu_ctx.enqueue_function_checked[final_matmul_kernel, final_matmul_kernel](
+                result_2d,
+                weights_2d,
+                v_tensor,
+                grid_dim=result_blocks_per_grid,
+                block_dim=matmul_threads_per_block,
+            )
 
             # ANCHOR_END: attention_orchestration
 
