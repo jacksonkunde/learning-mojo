@@ -41,18 +41,18 @@ fn embedding_kernel_coalesced[
 
     # Convert to (batch, seq, embed) coordinates
     var batch_idx = global_idx // (seq_len * embed_dim)
-    var within_batch = (global_idx % (batch_idx * seq_len))
+    var within_batch = (global_idx % (seq_len * embed_dim))
     var seq_idx =  within_batch // embed_dim
-    var embed_idx = within_batch % seq_len
+    var embed_idx = within_batch % embed_dim
 
     # Get token index
     var token_idx = indices[batch_idx, seq_idx]
 
     # Simple, correct assignment
     if token_idx >= 0 and token_idx < vocab_size:
-        output[batch_idx, token_idx, embed_idx] = weights[token_idx, embed_idx]
+        output[batch_idx, seq_idx, embed_idx] = weights[token_idx, embed_idx]
     else:
-        output[batch_idx, token_idx, embed_idx] = 0
+        output[batch_idx, seq_idx, embed_idx] = 0
 
 
 # ANCHOR_END: embedding_kernel_coalesced
@@ -79,7 +79,6 @@ fn embedding_kernel_2d[
     Non-optimal approach for comparison:
     - 2D grid: (batch*seq, embed_dim)
     - More complex indexing
-    - Potentially worse memory access patterns
     """
 
     # 2D grid indexing
@@ -92,7 +91,7 @@ fn embedding_kernel_2d[
 
     # Convert to (batch, seq) coordinates
     var batch_idx = batch_seq_idx // seq_len
-    var seq_idx = (batch_seq_idx % batch_idx)
+    var seq_idx = (batch_seq_idx % seq_len)
     
 
     # Get token index
@@ -102,7 +101,7 @@ fn embedding_kernel_2d[
     if token_idx >=0 and token_idx < vocab_size:
         output[batch_idx, seq_idx, embed_idx] = weights[token_idx, embed_idx]
     else:
-        output[batch_seq_idx, embed_idx] = 0
+        output[batch_idx, seq_idx, embed_idx] = 0
 
 
 # ANCHOR_END: embedding_kernel_2d
