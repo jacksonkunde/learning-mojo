@@ -340,18 +340,48 @@ fn minimal_fused_kernel_backward[
     var sum_val: Scalar[dtype] = 0
     var sq_sum: Scalar[dtype] = 0
 
-    # FILL IN roughly 8 lines
+    @parameter
+    for hd in range(hidden_dim):
+        var val = rebind[Scalar[dtype]](input[batch_idx, seq_idx, hd])
+        sum_val += val
+        sq_sum += val * val
+    
+    mean_val = sum_val / hidden_dim
+    variance = (sq_sum / hidden_dim) - (mean_val * mean_val)
+    inv_std = 1 / (sqrt(variance) + 1e-5)
+
+
 
     # Step 2: Atomically accumulate gradients w.r.t. linear bias
-
-    # FILL IN roughly 4 lines
+    # the gradient wrt the bias term will be each gradient in the grad_output
+    @parameter
+    for out_idx in range(output_dim):
+        _ = Atomic[dtype].fetch_add(
+            grad_bias.ptr.offset(out_idx), 
+            rebind[Scalar[dtype]](grad_output[batch_idx, seq_idx, out_idx])
+        )
 
     # Step 3: Atomically accumulate gradients w.r.t. linear weight
-    # Make sure to use the correct atomic operation to avoid race conditions
-
-    # FILL IN roughly 10 lines
+    # The grad will be the relvant output of the layer norm * grad_out
+    # consider W_ij
+    @parameter
+    for i in range(output_dim):
+        @parameter
+        for j in range(hidden_dim):
+            var inp = rebind[Scalar[dtype]](input[batch_idx, seq_idx, j])
+            var inp_normalized = (inp - mean_val) * inv_std
+            var ln_out = inp_normalized * rebind[Scalar[dtype]](
+                ln_weight[j]
+            ) + rebind[Scalar[dtype]](ln_bias[j])
+            # access grad_weight[i, j]
+            _ = Atomic[dtype].fetch_add(
+                grad_weight.ptr.offset(i * hidden_dim + j), 
+                ln_out * rebind[Scalar[dtype]](grad_output[batch_idx, seq_idx, i])
+            )
 
     # Step 4: Atomically accumulate gradients w.r.t. LayerNorm parameters
+    
+
 
     # FILL IN roughly 10 lines
 
